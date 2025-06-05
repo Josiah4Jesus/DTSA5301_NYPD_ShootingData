@@ -1,0 +1,435 @@
+---
+title: "JosiahBall_NYPD_DataAnalysis"
+author: "Josiah Ball"
+date: "2025-05-30"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library('tidyverse')
+library('lubridate')
+library('skimr')
+library('ggplot2')
+```
+
+## Overview
+
+The purpose of this document is to glorify Jesus Christ by learning proper data analysis in R.
+
+In this R Markdown file, I will:
+
+1. Overview the problem
+2. Overview and describe the dataset
+3. Import and tidying the data
+4. Perform exploratory data analysis
+5. Train and test a predictive model
+
+## The Problem
+
+In the show "Person of interest" the main characters Harold Finch and John Reese use a massive data-driven artificial intelligence model called "the Machine" to predict which Social Security Number is either in danger of either doing a violent crime or having a violent crime done to them. This workbook is meant to be a mini-"The Machine". We will look at the crime data from the New York police Department (NYPD), explore and tidy the data, and run a logistic analysis to see if we can predict where crimes are more likely to be murders.
+
+## The Dataset
+
+The dataset used in this analysis is the "NYPD Shooting Incident Data (Historic)" public dataset from the data.gov data catalog and may be found here: <https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic>.[1] As the source explains, this dataset contains "every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year."[2] More information about the dataset may be seen in the exploratory data analysis section below. It is important to note much of the R code in this document was informed by the help of ChatGPT.[3]
+
+```{r Import Dataset}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+df <- read_csv(url_in)
+head(df)
+```
+
+## Tidy Data
+
+Now that the data is uploaded, we want to tidy the data. Specifically, we will examine:
+
+1. Examine the structure of the dataset/columns
+2. Drop unnecessary columns
+3. Handle NA values column-by-column
+
+```{r Glimpse df}
+
+glimpse(df)
+
+```
+
+We can see from glimpsing the data that many columns are not in the correct format. We will first correct the column data types.
+
+```{r Fix Data Types}
+
+# Change columns which should be factors into factors
+df <- df %>%
+  mutate(across(c(BORO,
+                  LOC_OF_OCCUR_DESC, 
+                  LOC_CLASSFCTN_DESC,
+                  LOCATION_DESC,
+                  PERP_AGE_GROUP,
+                  PERP_SEX,
+                  PERP_RACE,
+                  VIC_AGE_GROUP,
+                  VIC_SEX,
+                  VIC_RACE), as.factor))
+
+# Change columns which should be dates into dates
+df <- df %>%
+  mutate(across(c(OCCUR_DATE), ~ as.Date(., format = "%m/%d/%y")))
+
+# Change columns which should be boolean into boolean
+df <- df %>%
+  mutate(across(c(STATISTICAL_MURDER_FLAG), as.logical))
+
+# Review data types
+glimpse(df)
+
+```
+
+Now we can drop the columns which we will not be utilizing in our analysis.
+
+```{r Drop columns}
+
+# Drop unnecessary columns
+df <- subset(df, select =  -c(PRECINCT, 
+                    JURISDICTION_CODE,
+                    X_COORD_CD,
+                    Y_COORD_CD,
+                    Latitude,
+                    Longitude,
+                    Lon_Lat))
+
+glimpse(df)
+
+```
+
+Now we may begin NULL handling column by column. We will begin by examining the whole table using skim.
+
+```{r Skim df}
+
+skim(df)
+
+```
+
+From this, we can see the columns OCCUR_DATE, OCCUR_TIME, BORO, VIC_AGE_GROUP, VIC_SEX, VIC_RACE, STATISTICAL_MURDER_FLAG, and INCIDENT_KEY all have no missing values, and thus we do not need to perform any NULL handling.
+
+Next, we will examine each column that does have missing values and come up with a strategy on how to handle them.
+
+```{r Handle PERP_RACE}
+
+df %>%
+  group_by(PERP_RACE) %>%
+  summarise(count = n())
+
+df <- df %>%
+  mutate(PERP_RACE = case_when(
+    is.na(PERP_RACE) ~ "UNKNOWN",
+    PERP_RACE == "(null)" ~ "UNKNOWN",
+    TRUE ~ PERP_RACE
+  ))
+
+df %>%
+  group_by(PERP_RACE) %>%
+  summarise(count = n())
+
+```
+
+For the column PERP_RACE, we see that there were three different values all meaning "UNKNOWN": 1) (null), 2) NA, and 3) UNKNOWN. So we replaced all values as (null) or NA as UNKNOWN.
+
+```{r Handle PERP_SEX}
+
+df %>%
+  group_by(PERP_SEX) %>%
+  summarise(count = n())
+
+df <- df %>%
+  mutate(PERP_SEX = case_when(
+    is.na(PERP_SEX) ~ "U",
+    PERP_SEX == "(null)" ~ "U",
+    TRUE ~ PERP_SEX
+  ))
+
+df %>%
+  group_by(PERP_SEX) %>%
+  summarise(count = n())
+
+```
+
+
+For the column PERP_SEX, we see that there were three different values all meaning "UNKNOWN": 1) (null), 2) NA, and 3) U. So we replaced all values as (null) or NA as U.
+
+```{r Handle PERP_AGE_GROUP}
+
+df %>%
+  group_by(PERP_AGE_GROUP) %>%
+  summarise(count = n())
+
+df <- df %>%
+  mutate(PERP_AGE_GROUP = case_when(
+    is.na(PERP_AGE_GROUP) ~ "UNKNOWN",
+    PERP_AGE_GROUP == "1020" ~ "UNKNOWN",
+    PERP_AGE_GROUP == "1022" ~ "UNKNOWN",
+    PERP_AGE_GROUP == "1028" ~ "UNKNOWN",
+    PERP_AGE_GROUP == "2021" ~ "UNKNOWN",
+    PERP_AGE_GROUP == "224" ~ "UNKNOWN",
+    PERP_AGE_GROUP == "940" ~ "UNKNOWN",
+    PERP_AGE_GROUP == "(null)" ~ "UNKNOWN",
+    TRUE ~ PERP_AGE_GROUP
+  ))
+
+df %>%
+  group_by(PERP_AGE_GROUP) %>%
+  summarise(count = n())
+
+```
+
+For the column PERP_AGE_GROUP, we see that there were three different values all meaning "UNKNOWN": 1) (null), 2) NA, and 3) UNKNOWN. So wereplaced all values as (null) or NA as UNKNOWN. Additionally, there were a number of errant values such as 1020, 1028, 2021, 224, and 940. We will also change these to be UNKNOWN.
+
+```{r Handle LOCATION_DESC}
+
+print(df %>%
+  group_by(LOCATION_DESC) %>%
+  summarise(count = n()),
+  n=41)
+
+df <- df %>%
+  mutate(LOCATION_DESC = case_when(
+    is.na(LOCATION_DESC) ~ "UNKNOWN",
+    LOCATION_DESC == "(null)" ~ "UNKNOWN",
+    LOCATION_DESC == "NONE" ~ "UNKNOWN",
+    TRUE ~ LOCATION_DESC
+  ))
+
+df %>%
+  group_by(LOCATION_DESC) %>%
+  summarise(count = n())
+
+```
+
+For the column LOCATION_DESC, we see that there were three different values all meaning "UNKNOWN": 1) (null), 2) NA, and 3) NONE. So we replaced all values as (null), NA, or NONE as UNKNOWN. 
+
+```{r Handle LOC_CLASSFCTN_DESC}
+
+print(df %>%
+  group_by(LOC_CLASSFCTN_DESC) %>%
+  summarise(count = n()),
+  n=11)
+
+df <- df %>%
+  mutate(LOC_CLASSFCTN_DESC = case_when(
+    is.na(LOC_CLASSFCTN_DESC) ~ "UNKNOWN",
+    LOC_CLASSFCTN_DESC == "(null)" ~ "UNKNOWN",
+    TRUE ~ LOC_CLASSFCTN_DESC
+  ))
+
+df %>%
+  group_by(LOC_CLASSFCTN_DESC) %>%
+  summarise(count = n())
+
+```
+
+For the column LOC_CLASSFCTN_DESC, we see that there were two different values all meaning "UNKNOWN": 1) (null), and 2) NA. So we replaced all values as (null) or NA as UNKNOWN. 
+
+```{r Handle LOC_OF_OCCUR_DESC}
+
+df %>% group_by(LOC_OF_OCCUR_DESC) %>%
+        summarise(count = n())
+
+df <- df %>%
+  mutate(LOC_OF_OCCUR_DESC = case_when(
+    is.na(LOC_OF_OCCUR_DESC) ~ "UNKNOWN",
+    TRUE ~ LOC_OF_OCCUR_DESC
+  ))
+
+df %>%
+  group_by(LOC_OF_OCCUR_DESC) %>%
+  summarise(count = n())
+
+```
+
+For the column LOC_OF_OCCUR_DESC, we see that the rows listed as NA were meant to be UNKNOWN. So we replaced all NA values as UNKNOWN. 
+
+Now we will view the cleaned dataset one last time to ensure we caught everything.
+
+```{r Skim df Again}
+
+skim(df)
+
+```
+
+
+Note that some columns got changed back to character data types, so we will transform factor columns back into factors.
+
+```{r Change to factors}
+
+# Change columns which should be factors into factors
+df <- df %>%
+  mutate(across(c(BORO,
+                  LOC_OF_OCCUR_DESC, 
+                  LOC_CLASSFCTN_DESC,
+                  LOCATION_DESC,
+                  PERP_AGE_GROUP,
+                  PERP_SEX,
+                  PERP_RACE,
+                  VIC_AGE_GROUP,
+                  VIC_SEX,
+                  VIC_RACE), as.factor))
+
+```
+## Exploratory Data Analysis
+
+Now that the data is tidy, we will begin exploring and understanding the data.
+
+```{r Plot Categorical Columns, echo=FALSE}
+
+# Get columns that are factors
+factor_cols <- names(df)[sapply(df, is.factor)]
+
+# Loop through each factor column and display a histogram
+for (col_name in factor_cols) {
+  print(
+    ggplot(df, aes(x = fct_infreq(.data[[col_name]]))) +
+      geom_bar(fill = "steelblue") +
+      labs(title = paste("Histogram of", col_name),
+           x = col_name,
+           y = "Count") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  )
+}
+
+# Plot Months
+df <- df %>%
+  mutate(month = floor_date(OCCUR_DATE, unit = "month"))
+
+ggplot(df, aes(x = month)) +
+  geom_histogram(binwidth = 30, fill = "steelblue", color = "white") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +
+  labs(title = "Counts by Month",
+       x = "Month",
+       y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Plot times
+df <- df %>%
+  mutate(hour = hour(OCCUR_TIME))
+
+ggplot(df, aes(x = hour)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "white") +
+  scale_x_continuous(breaks = 0:23) +
+  labs(title = "Counts by Hour of Day",
+       x = "Hour of Day (0–23)",
+       y = "Count") +
+  theme_minimal()
+
+# Plot Murder Flag
+ggplot(df, aes(x = STATISTICAL_MURDER_FLAG)) +
+  geom_bar(fill = "steelblue", color = "white") + 
+  labs(title = "Proportion of Crimes that Are Murders",
+       x = "Is the Crime a Murder?",
+       y = "Count") +
+  theme_minimal()
+
+```
+
+From these graphs, we can begin gathering some initial questions for us to further research:
+
+1. Why are Brooklyn and the Bronx the top two areas in regards to the number of crimes committed? 
+2. What factors influence geographic increases in crime?
+3. In what ways can we use the information about geographic crime rates to try and prevent crime in ways that do not further historical injustices?
+4. Why do crime rates go up in the summer months?
+5. Why is 12AM-1AM so much higher than all other hour slots? Is this a data entry bug or accurate information?
+
+
+## Analysis
+
+With the data now understood, we can begin analyzing it. In this analysis, we will run a logistic regression on the STATISTICAL_MURDER_FLAG field to see what variables are the strongest predictor of if a crime will be a murder so that we may better plan to eliminate these cases.
+
+First, we will need to remove any rows where the variables are "unknown" so we do not muddy the data. We will shrink the dataset into a "golden" subset containing only rows with all the needed information and then run a logistic regression on it.
+
+```{r Logistic Regression on Murder Flag}
+
+# Remove rows where any column has the value "UNKNOWN"
+df_clean <- df %>%
+  mutate(across(c(BORO,
+                  LOC_OF_OCCUR_DESC, 
+                  LOC_CLASSFCTN_DESC,
+                  PERP_AGE_GROUP,
+                  PERP_SEX,
+                  PERP_RACE,
+                  LOCATION_DESC,
+                  VIC_AGE_GROUP,
+                  VIC_SEX,
+                  VIC_RACE), as.character))
+df_clean <- df_clean %>%
+  filter(!if_any(c(BORO,
+                   LOC_OF_OCCUR_DESC, 
+                   LOC_CLASSFCTN_DESC,
+                   PERP_AGE_GROUP,
+                   PERP_SEX,
+                   PERP_RACE,
+                   LOCATION_DESC,
+                   VIC_AGE_GROUP,
+                   VIC_SEX,
+                   VIC_RACE), ~ .x == "UNKNOWN"))
+
+# Change columns which should be factors into factors
+df_clean <- df_clean %>%
+  mutate(across(c(BORO,
+                  LOC_OF_OCCUR_DESC, 
+                  LOC_CLASSFCTN_DESC,
+                  PERP_AGE_GROUP,
+                  PERP_SEX,
+                  PERP_RACE,
+                  LOCATION_DESC,
+                  VIC_AGE_GROUP,
+                  VIC_SEX,
+                  VIC_RACE), as.factor))
+
+# Change columns which should be dates into dates
+df_clean <- df_clean %>%
+  mutate(across(c(OCCUR_DATE), ~ as.Date(., format = "%m/%d/%y")))
+
+# Change columns which should be boolean into boolean
+df_clean <- df_clean %>%
+  mutate(across(c(STATISTICAL_MURDER_FLAG), as.logical))
+
+# Perform Logistic regression on STATISTICAL_MURDER_FLAG field
+model <- glm(STATISTICAL_MURDER_FLAG ~ ., data = df_clean, family = binomial)
+summary(model)
+
+```
+
+The output of the logistic regression is showing the following variables are statistically significant when predicting if the crime will be a murder or not:
+
+1. LOC_OF_OCCUR_DESCOUTSIDE has effect -0.6273 with p-value 0.00395 --> This means if a crime happens outdoors, it is less likely to be murder.
+2. LOC_CLASSFCTN_DESCDWELLING has effect 1.150 with p-value 0.00548 --> This means if a crime happens at a dwelling, it is more likely to be murder.
+3. LOCATION_DESCTELECOMM. STORE has effect 2.436 with p-value 0.01480 --> This means if a crime happens at a telecommunication store, it is more likely to be murder.
+
+These results make intuitive sense, as most murders are committed inside homes. However, the third most significant variable is a bit surprising: that if a crime happens at a telecommunication store, then it is more likely to be a murder. This is especially surprising given we would expect theft to be common at these locations. This is worth looking into and validating further. We will add this to our list of further questions to investigate:
+
+6. Is the initial observation that a crime happening at a telecommunication store meaning it is more likely to be a murder accurate? If so, why might this be?
+
+## Conclusion
+
+### Biases
+
+As in all cases, I come into this investigation with biases. Some possible biases include:
+
+1. My own background. I grew up in a very affirming and supportive Christian home. Because of this, I am very sheltered from many historical structures of injustice that have perpetuated inequalities. When discussing things like whether police should more heavily patrol areas with higher crime rates, I need to listen well to others who raise concerns about perpetuating cycles of crime and poverty. 
+2. I tend to trust law enforcement authorities. Some people in my circles are very distrusting of law enforcement because of their own negative experiences. I need to be aware of my bias in conversations where I do strongly believe law enforcement is a net good and necessary institution.
+
+### Questions for further investigation:
+
+1. Why are Brooklyn and the Bronx the top two areas in regards to the number of crimes committed? 
+2. What factors influence geographic increases in crime?
+3. In what ways can we use the information about geographic crime rates to try and prevent crime in ways that do not further historical injustices?
+4. Why do crime rates go up in the summer months?
+5. Why is 12AM-1AM so much higher than all other hour slots? Is this a data entry bug or accurate information?
+6. Is the initial observation that a crime happening at a telecommunication store meaning it is more likely to be a murder accurate? If so, why might this be?
+
+## Works Cited
+
+[1] "NYPD Shooting Incident Data (Historic)" Data Catalog, Data.gov, last updated Apirl 19, 2025, accessed May 16, 2025. Link: <https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic>  \
+[2] Ibid.  \
+[3] Workbook was created with the assistance of ChatGPT.
